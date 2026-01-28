@@ -32,12 +32,7 @@ bash
 Copiar
 ￼
 Descargar
-# Copia todo el script a un archivo
-# Guárdalo como: k8s-lab-setup.sh
-2. Hacerlo ejecutable:
-bash
-￼
-Copiar
+# Copia todo el script 
 ￼
 Descargar
 chmod +x k8s-lab-setup.sh
