@@ -1,0 +1,156 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# ============================================
+# K8s 1.34.3 HA Cluster - Configuración Mínima
+# 16GB RAM / 12 CPUs
+# ============================================
+
+Vagrant.configure("2") do |config|
+  
+  config.vm.box = "ubuntu/jammy64"
+  config.vm.box_version = "20241002.0.0"
+  
+  # Configuración global mínima
+  config.vm.provider "virtualbox" do |vb|
+    vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+    vb.customize ["modifyvm", :id, "--natdnsproxy1", "on"]
+    # Deshabilitar audio y USB para ahorrar recursos
+    vb.customize ["modifyvm", :id, "--audio", "none"]
+    vb.customize ["modifyvm", :id, "--usb", "off"]
+  end
+
+  # Hosts para todos los nodos
+  config.vm.provision "shell", inline: <<-SHELL
+    cat <<EOF >> /etc/hosts
+192.168.1.150 k8s-api.local k8s-api vip
+192.168.1.149 haproxy1
+192.168.1.148 haproxy2
+192.168.1.151 master1
+192.168.1.152 master2
+192.168.1.153 master3
+192.168.1.154 worker1
+EOF
+  SHELL
+
+  # ==========================================
+  # HAPROXY 1 - Mínimo recursos
+  # ==========================================
+  config.vm.define "haproxy1" do |node|
+    node.vm.hostname = "haproxy1"
+    node.vm.network "private_network", ip: "192.168.1.149"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "k8s-haproxy1"
+      vb.memory = "512"
+      vb.cpus = 1
+    end
+
+    node.vm.provision "shell", path: "scripts/common.sh"
+    node.vm.provision "shell", path: "scripts/haproxy-node.sh"
+    node.vm.provision "shell", path: "scripts/keepalived-haproxy.sh", args: ["MASTER", "101"]
+  end
+
+  # ==========================================
+  # HAPROXY 2 - Mínimo recursos
+  # ==========================================
+  config.vm.define "haproxy2" do |node|
+    node.vm.hostname = "haproxy2"
+    node.vm.network "private_network", ip: "192.168.1.148"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "k8s-haproxy2"
+      vb.memory = "512"
+      vb.cpus = 1
+    end
+
+    node.vm.provision "shell", path: "scripts/common.sh"
+    node.vm.provision "shell", path: "scripts/haproxy-node.sh"
+    node.vm.provision "shell", path: "scripts/keepalived-haproxy.sh", args: ["BACKUP", "100"]
+  end
+
+  # ==========================================
+  # MASTER 1 - Máximo recursos (inicializador)
+  # ==========================================
+  config.vm.define "master1" do |node|
+    node.vm.hostname = "master1"
+    node.vm.network "private_network", ip: "192.168.1.151"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "k8s-master1"
+      vb.memory = "4096"  # 4GB para inicializar y correr Cilium
+      vb.cpus = 2
+    end
+
+    node.vm.provision "shell", path: "scripts/common.sh"
+    node.vm.provision "shell", path: "scripts/master.sh"
+    node.vm.provision "shell", path: "scripts/cilium.sh"
+  end
+
+  # ==========================================
+  # MASTER 2 - Mínimo viable
+  # ==========================================
+  config.vm.define "master2" do |node|
+    node.vm.hostname = "master2"
+    node.vm.network "private_network", ip: "192.168.1.152"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "k8s-master2"
+      vb.memory = "2560"  # 2.5GB
+      vb.cpus = 2
+    end
+
+    node.vm.provision "shell", path: "scripts/common.sh"
+    
+    # Delay para esperar a master1
+    node.vm.provision "shell", inline: <<-SHELL
+      echo "Esperando a master1..."
+      until [ -f /vagrant/join-master.sh ]; do sleep 10; done
+      sleep 60
+    SHELL
+    
+    node.vm.provision "shell", path: "scripts/master-join.sh"
+  end
+
+  # ==========================================
+  # MASTER 3 - Mínimo viable
+  # ==========================================
+  config.vm.define "master3" do |node|
+    node.vm.hostname = "master3"
+    node.vm.network "private_network", ip: "192.168.1.153"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "k8s-master3"
+      vb.memory = "2560"  # 2.5GB
+      vb.cpus = 2
+    end
+
+    node.vm.provision "shell", path: "scripts/common.sh"
+    
+    node.vm.provision "shell", inline: <<-SHELL
+      echo "Esperando estabilidad del cluster..."
+      until [ -f /vagrant/join-master.sh ]; do sleep 10; done
+      sleep 90
+    SHELL
+    
+    node.vm.provision "shell", path: "scripts/master-join.sh"
+  end
+
+  # ==========================================
+  # WORKER 1 - Recursos para workloads
+  # ==========================================
+  config.vm.define "worker1" do |node|
+    node.vm.hostname = "worker1"
+    node.vm.network "private_network", ip: "192.168.1.154"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "k8s-worker1"
+      vb.memory = "4096"  # 4GB para correr pods
+      vb.cpus = 2
+    end
+
+    node.vm.provision "shell", path: "scripts/common.sh"
+    node.vm.provision "shell", path: "scripts/worker.sh"
+  end
+
+end
